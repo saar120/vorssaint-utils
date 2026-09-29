@@ -121,7 +121,8 @@ enum NotchHoverTests {
             updateBounds()
         }
         func mutatePresentation(transitionContent: NotchContentTransition, _ change: () -> Void) { change(); updateBounds() }
-        func refreshPresentation() { updateBounds() }
+        var refreshes = 0
+        func refreshPresentation() { refreshes += 1; updateBounds() }
         func provideHapticFeedback() { feedbacks += 1 }
         func updateBounds() { windowHost?.rect = geometry.frame(for: surfaceSize) }
     }
@@ -148,6 +149,38 @@ enum NotchHoverTests {
         func leave(_ service: Service) {
             NSEvent.mouseLocation = CGPoint(x: service.geometry.screen.minX, y: service.geometry.screen.minY)
             service.hover(false)
+        }
+        for reduced in [false, true] {
+            let capsule = fixture()
+            capsule.geometry = NotchGeometry(screen: capsule.geometry.screen, safeAreaTop: 0, cameraWidth: 0,
+                                              silhouette: .capsule,
+                                              capsuleFit: NotchCapsuleFit(width: 0, height: 0, drop: 12))
+            capsule.windowHost?.visible = false
+            NSWorkspace.shared.accessibilityDisplayShouldReduceMotion = reduced
+            UserDefaults.standard.enabled = false
+            capsule.syncHiddenHoverMonitoring()
+            suite.expect(capsule.hiddenHoverMonitors.count == 2,
+                         "a hidden click-only capsule watches both native and other-app pointer movement")
+            capsule.hover(true)
+            suite.expect(capsule.inside && capsule.refreshes == 1 && capsule.openings == 0 && capsule.hoverWork == nil,
+                         "approaching the top edge reveals the capsule without opening its page, even with Reduce Motion")
+            leave(capsule)
+            suite.expect(!capsule.inside && capsule.refreshes == 2,
+                         "leaving a click-only capsule refreshes its hidden presentation")
+            UserDefaults.standard.enabled = true
+            NSEvent.mouseLocation = CGPoint(x: capsule.geometry.screen.midX, y: capsule.geometry.screen.maxY)
+            capsule.hover(true)
+            let work = capsule.hoverWork
+            capsule.hover(true)
+            suite.expect(capsule.hoverWork === work, "repeated top-edge movement preserves the capsule's first hover deadline")
+            DispatchQueue.main.advance(UserDefaults.standard.delay)
+            suite.expect(capsule.openings == 1 && capsule.expanded && capsule.openedByHover,
+                         "the capsule's fitted gap remains a valid delayed opening target")
+            capsule.hover(true)
+            leave(capsule)
+            DispatchQueue.main.advance(NotchQuickAccessLayout.hoverExitDelay)
+            suite.expect(capsule.closures == 1, "a hover-opened capsule closes after leaving, even without entering its visible pixels")
+            capsule.removeHiddenHoverMonitors()
         }
         for physical in [false, true] {
             for reduced in [false, true] {

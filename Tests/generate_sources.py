@@ -650,6 +650,7 @@ def main():
               "    private func removeCaptureControlsClickThrough()", "    private func missionControlDidRestore()",
               "    func endCaptureControls()"])
           + declaration(notch, "    private var hiddenUntilHover:").replace("private var", "var", 1)
+          + declaration(notch, "    private var hiddenAtRestWithoutNotch:").replace("private var", "var", 1)
           + declaration(notch, "    private var hiddenAtRestInFullscreen:").replace("private var", "var", 1)
           + declaration(notch, "    var acceptsUserInteraction:")
           + declaration(notch, "    var acceptsSystemFeedback:")

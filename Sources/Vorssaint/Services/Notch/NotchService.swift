@@ -219,6 +219,13 @@ final class NotchService: ObservableObject {
             && !expanded && !peeking && !dragPlaceholder && captureControls == nil
     }
 
+    /// A floating island covers no camera. It appears on approach, or briefly
+    /// for a notice or new song, instead of occupying the menu bar all day.
+    private var hiddenAtRestWithoutNotch: Bool {
+        geometry.floats && !inside && !expanded && !peeking && !dragPlaceholder
+            && captureControls == nil && notice == nil && !capsuleMusicTitleShown
+    }
+
     /// Full screen keeps a clickable black cutout until the user opens it.
     var fullscreenCompact: Bool {
         hiddenInFullscreen && !expanded && !peeking
@@ -972,6 +979,7 @@ final class NotchService: ObservableObject {
             if notice?.notificationID != nil { noticeWork?.cancel(); noticeWork = nil; notice = nil; noticeExpanded = false }
         }
         inside = windowHost?.containsHover(NSEvent.mouseLocation) == true
+            || (geometry.floats && geometry.containsHoverActivation(NSEvent.mouseLocation))
         installEventMonitors()
         syncVisibleConsumers()
         if takeFocus { panel.makeKey() }
@@ -980,7 +988,9 @@ final class NotchService: ObservableObject {
 
     func collapse() {
         guard captureControls == nil, !heldDrag else { return }
-        hoverState.close(pointerInside: windowHost?.containsHover(NSEvent.mouseLocation) == true)
+        hoverState.close(pointerInside: windowHost?.containsHover(NSEvent.mouseLocation) == true
+                         || (geometry.floats && geometry.containsHoverActivation(NSEvent.mouseLocation)))
+        if geometry.floats { inside = geometry.containsHoverActivation(NSEvent.mouseLocation) }
         pinned = false
         hoverWork?.cancel(); hoverWork = nil
         if noticeExpanded { noticeWork?.cancel(); noticeWork = nil }
@@ -1025,11 +1035,16 @@ final class NotchService: ObservableObject {
         inside = hiddenUntilHover ? geometry.contains(point, in: geometry.collapsed)
             && windowHost?.isConcealedForMissionControl == false
             : windowHost?.containsHover(point) == true || pointerOverChildWindow(point)
+        if !hiddenUntilHover, geometry.floats,
+           geometry.containsHoverActivation(point), windowHost?.blocksHoverReveal() == false {
+            inside = true
+        }
         hoverState.update(pointerInside: inside)
         let emphasize = inside && !hiddenInFullscreen && !hiddenUntilHover && !expanded && !peeking && !dragPlaceholder
             && notice == nil && captureControls == nil
             && !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
-        if hoverEmphasized != emphasize || showedPicker != showsCompactActivityPicker {
+        if hoverEmphasized != emphasize || showedPicker != showsCompactActivityPicker
+            || (geometry.floats && inside != wasInside) {
             hoverEmphasized = emphasize
             refreshPresentation()
         }
@@ -1066,7 +1081,8 @@ final class NotchService: ObservableObject {
                       self.captureControls == nil, (self.notice == nil || self.hiddenUntilHover), !self.dragPlaceholder,
                       UserDefaults.standard.bool(forKey: DefaultsKey.notchOpenOnHover),
                       self.windowHost?.blocksHoverReveal() == false,
-                      self.geometry.contains(NSEvent.mouseLocation, in: self.hiddenUntilHover ? self.geometry.collapsed : self.surfaceSize) else { return }
+                      (self.geometry.contains(NSEvent.mouseLocation, in: self.hiddenUntilHover ? self.geometry.collapsed : self.surfaceSize)
+                       || (!self.hiddenUntilHover && self.geometry.floats && self.geometry.containsHoverActivation(NSEvent.mouseLocation))) else { return }
                 if UserDefaults.standard.bool(forKey: DefaultsKey.notchHoverExpands) {
                     self.open(takeFocus: false)
                 } else {
@@ -1936,16 +1952,17 @@ final class NotchService: ObservableObject {
             schedulePointerFollow()
             syncMirrors()
         }
-        if hiddenUntilHover || (captureControls != nil && captureSelectionInProgress) {
+        if hiddenUntilHover || hiddenAtRestWithoutNotch || (captureControls != nil && captureSelectionInProgress) {
             finishMusicDeparture()
             presentedMusic = nil
-            if hiddenUntilHover { windowHost?.hide(animated: animated, transitionContent: transitionContent) }
+            if hiddenUntilHover || hiddenAtRestWithoutNotch { windowHost?.hide(animated: animated, transitionContent: transitionContent) }
             else { panel?.orderOut(nil) }
             removeScreenEdgeClickMonitors()
             return
         }
         let open = expanded || peeking || notice != nil || dragPlaceholder || captureControls != nil
-        guard open || (!hiddenAtRestInFullscreen && (geometry.isNotched || geometry.compactSideRoom != nil)) else {
+        guard open || (!hiddenAtRestInFullscreen && (geometry.isNotched || geometry.compactSideRoom != nil
+                                                    || (geometry.floats && (inside || capsuleMusicTitleShown)))) else {
             finishMusicDeparture()
             presentedMusic = nil
             windowHost?.hide(animated: animated, transitionContent: transitionContent)
@@ -1969,13 +1986,16 @@ final class NotchService: ObservableObject {
                             transitionContent: contentTransition,
                             quickAccess: expanded && captureControls == nil && !access.buttons.isEmpty ? access : nil,
                             revealFromHidden: !hiddenInFullscreen && captureControls == nil
-                                && UserDefaults.standard.bool(forKey: DefaultsKey.notchHideUntilHover)
-                                && UserDefaults.standard.bool(forKey: DefaultsKey.notchOpenOnHover),
+                                && (geometry.floats || (UserDefaults.standard.bool(forKey: DefaultsKey.notchHideUntilHover)
+                                    && UserDefaults.standard.bool(forKey: DefaultsKey.notchOpenOnHover))),
                             usesGlass: !fullscreenCompact && usesGlassSurface)
         // Closing can shrink the island away from a pointer that has not moved,
         // with no boundary crossing to report it. Only a pointer still over the
         // island may keep its next approach from opening it.
-        if windowHost?.containsHover(NSEvent.mouseLocation) != true { hoverState.update(pointerInside: false) }
+        if windowHost?.containsHover(NSEvent.mouseLocation) != true
+            && !(geometry.floats && geometry.containsHoverActivation(NSEvent.mouseLocation)) {
+            hoverState.update(pointerInside: false)
+        }
         let activationRect: CGRect
         if captureControls != nil {
             activationRect = captureControlsCollapsed ? CGRect(origin: .zero, size: size) : .zero
@@ -2014,13 +2034,14 @@ final class NotchService: ObservableObject {
     }
 
     private func syncHiddenHoverMonitoring() {
-        guard running, !suspended, hiddenUntilHover, windowHost != nil else {
+        let watchesCapsule = geometry.floats && captureControls == nil
+        guard running, !suspended, hiddenUntilHover || watchesCapsule, windowHost != nil else {
             removeHiddenHoverMonitors()
             return
         }
         guard hiddenHoverMonitors.isEmpty else { return }
-        // The window is ordered out, so native tracking areas cannot see entry.
-        // Observe movement without intercepting the menu bar or polling at rest.
+        // Native tracking cannot see a hidden window or the gap above a floating
+        // capsule. Observe entry and exit across that gap without polling at rest.
         if let token = NSEvent.addGlobalMonitorForEvents(matching: .mouseMoved, handler: { [weak self] _ in
             self?.hover(true)
         }) { hiddenHoverMonitors.append(token) }
@@ -2102,10 +2123,10 @@ final class NotchService: ObservableObject {
         invalidateMenuSpace()
         syncVisibleConsumers()
         refreshPresentation(animated: false)
+        if geometry.floats { hover(true) }
     }
 
-    /// A new song's title shows in the capsule for a few seconds, then the
-    /// capsule keeps only the cover and the bars.
+    /// A new song briefly reveals the capsule; it stays after that only while hovered.
     private func nameCapsuleSong() {
         // The song held for the next one's notice is the one that ended; the
         // next song is named once the notice lets it go.
@@ -2160,7 +2181,8 @@ final class NotchService: ObservableObject {
                 var geometry = baseGeometry(for: screen)
                 geometry.compactSideRoom = mirrorSideRoom(on: screen, geometry: geometry)
                 // A simulated island needs the menus' room at rest, as the island does.
-                if geometry.isNotched || geometry.compactSideRoom != nil { base = geometry }
+                if (geometry.isNotched || geometry.compactSideRoom != nil)
+                    && (!geometry.floats || capsuleMusicTitleShown) { base = geometry }
             }
             guard let base else {
                 if let mirror = mirrors[id], mirror.model.shown {
@@ -2480,6 +2502,7 @@ final class NotchService: ObservableObject {
         let screen = screens[index]
         displayID = screen.notchDisplayID
         var next = baseGeometry(for: screen)
+        if next.screen != geometry.screen { inside = false; hoverEmphasized = false }
         let sameMenuBar = next.hasSameMenuBar(as: geometry)
         if sameMenuBar { next.compactSideRoom = geometry.compactSideRoom }
         next.quickAccessBottomInset = NotchQuickAccessConfiguration.current().hasBottom ? NotchQuickAccessLayout.gutter : 0

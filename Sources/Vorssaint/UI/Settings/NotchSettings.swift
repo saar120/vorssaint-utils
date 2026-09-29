@@ -115,7 +115,8 @@ struct NotchSettings: View {
                 Toggle(text.enable, isOn: $enabled).labelsHidden().toggleStyle(.switch)
                     .disabled(!AppFeature.notch.isAvailable).accessibilityLabel(text.enable)
             }
-            if enabled, AppFeature.notch.isAvailable, !(hover && hideUntilHover), !notch.geometry.isNotched, !permissions.accessibility {
+            if enabled, AppFeature.notch.isAvailable, !(hover && hideUntilHover), !notch.geometry.isNotched,
+               !notch.geometry.floats, !permissions.accessibility {
                 VStack(alignment: .leading, spacing: 8) {
                     Text(text.menuBarAccessHint)
                         .font(.callout).foregroundStyle(.secondary)
@@ -198,6 +199,9 @@ struct NotchSettings: View {
                     HStack(spacing: 10) {
                         silhouetteChoice(.capsule, title: text.capsuleShape)
                         silhouetteChoice(.notch, title: text.notchShape)
+                    }
+                    if NotchSilhouette(rawValue: silhouette) ?? .capsule == .capsule {
+                        Text(editor.hiddenUntilHover).font(.caption).foregroundStyle(.secondary)
                     }
                 }
                 if NotchSilhouette(rawValue: silhouette) ?? .capsule == .capsule {

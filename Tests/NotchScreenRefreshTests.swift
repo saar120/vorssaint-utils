@@ -156,6 +156,7 @@ enum NotchScreenRefreshContract {
             }
         }
         func syncVisibleConsumers() { consumerSyncs += 1 }
+        func hover(_ entered: Bool) {}
     }
 
     static func run(_ suite: TestSuite) {

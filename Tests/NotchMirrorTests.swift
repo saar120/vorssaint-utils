@@ -76,6 +76,7 @@ enum NotchMirrorContract {
         var idleContent = NotchIdleContent.none
         var expanded = false, peeking = false, canFollowPointer = true
         var hidesUntilHover = false, coversMenus = true, showsInCaptures = true
+        var capsuleMusicTitleShown = false
         var outlineEnabled = false, hidesInFullscreen = false
         let openTitle = "Open"
         var opened = 0, collapses = 0
@@ -120,6 +121,9 @@ enum NotchMirrorContract {
         NSScreen.screensHaveSeparateSpaces = false
 
         let service = Service()
+        service.syncMirrors()
+        suite.expect(service.mirrors[2] == nil, "an idle notchless display has no permanent mirrored capsule")
+        service.capsuleMusicTitleShown = true
         service.syncMirrors()
         let capsule = service.mirrors[2]
         suite.expect(service.mirrors.count == 1 && service.mirrors[1] == nil && capsule?.model.shown == true
@@ -227,6 +231,14 @@ enum NotchMirrorContract {
         service.syncMirrors()
         suite.expect(!service.mirrors.isEmpty && service.mirrors.values.allSatisfy { $0.host.panel.sharingType == .none },
                      "copies stay out of screenshots with the island")
+        service.capsuleMusicTitleShown = false
+        service.syncMirrors()
+        suite.expect(service.mirrors[2]?.model.shown == false,
+                     "ending a brief indicator hides the notchless copy even with an active timer")
+        service.displayID = 2
+        service.syncMirrors()
+        suite.expect(service.mirrors[1]?.model.shown == true,
+                     "a physical notch keeps its resting copy when the brief indicator ends")
         service.running = false
         service.syncMirrors()
         suite.expect(service.mirrors.isEmpty, "a stopped island leaves no copies")

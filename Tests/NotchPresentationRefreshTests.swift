@@ -175,6 +175,7 @@ enum NotchPresentationRefreshContract {
         var captureControls: CaptureOptions?
         var captureControlsCollapsed = false, captureSelectionInProgress = false
         var inside = false, trackingMenu = false
+        var capsuleMusicTitleShown = false
         var captureControlsWork: DispatchWorkItem?
         var captureControlsSubscription: AnyCancellable?
         var captureControlsCancel: (() -> Void)?
@@ -215,6 +216,7 @@ enum NotchPresentationRefreshContract {
 
     static func run(_ suite: TestSuite) {
         compactMusicDepartureChecks(suite)
+        notchlessHoverChecks(suite)
         UserDefaults.standard.hides = false
         UserDefaults.standard.outline = false
         defer {
@@ -601,5 +603,47 @@ enum NotchPresentationRefreshContract {
                      && reduced.departingMusic == nil,
                      "Reduce Motion removes the music strip immediately")
         NSWorkspace.shared.accessibilityDisplayShouldReduceMotion = false
+    }
+
+    private static func notchlessHoverChecks(_ suite: TestSuite) {
+        let service = Service()
+        service.expanded = false
+        service.geometry = NotchGeometry(screen: CGRect(x: -1920, y: 180, width: 1920, height: 1080),
+                                         safeAreaTop: 0, cameraWidth: 0, silhouette: .capsule,
+                                         capsuleFit: NotchCapsuleFit(width: 0, height: 0, drop: 12))
+        service.refreshPresentation(animated: false)
+        suite.expect(service.panel?.isVisible == false && !service.edgeClicksEnabled,
+                     "a notchless capsule leaves the menu bar clear at rest")
+        service.compactActivity = .music
+        service.compactActivityIsVisible = true
+        service.refreshPresentation(animated: false)
+        suite.expect(service.panel?.isVisible == false,
+                     "ongoing playback does not leave a permanent capsule on a notchless display")
+        service.capsuleMusicTitleShown = true
+        service.refreshPresentation(animated: false)
+        suite.expect(service.panel?.isVisible == true && service.windowHost?.revealFromHidden == true,
+                     "a new track can briefly reveal the capsule using the production hidden reveal")
+        service.capsuleMusicTitleShown = false
+        service.refreshPresentation(animated: false)
+        suite.expect(service.panel?.isVisible == false, "the capsule withdraws when the brief track indicator ends")
+        service.inside = true
+        service.refreshPresentation(animated: false)
+        suite.expect(service.panel?.isVisible == true && service.edgeClicksEnabled,
+                     "approaching the capsule reveals clickable controls even without menu measurements")
+        service.expanded = true
+        service.inside = false
+        service.refreshPresentation(animated: false)
+        suite.expect(service.panel?.isVisible == true,
+                     "an explicitly opened page remains usable away from the hover target")
+        service.expanded = false
+        service.refreshPresentation(animated: false)
+        suite.expect(service.panel?.isVisible == false, "closing away from the capsule clears the display again")
+        let geometry = service.geometry
+        suite.expect(geometry.containsHoverActivation(CGPoint(x: geometry.screen.midX, y: geometry.screen.maxY))
+                     && geometry.containsHoverActivation(CGPoint(x: geometry.screen.midX, y: geometry.screen.maxY - 10))
+                     && !geometry.containsHoverActivation(CGPoint(x: geometry.screen.midX + 200, y: geometry.screen.maxY))
+                     && !geometry.containsHoverActivation(CGPoint(x: geometry.screen.midX, y: geometry.screen.maxY + 1))
+                     && !geometry.containsHoverActivation(CGPoint(x: geometry.screen.midX, y: geometry.screen.maxY - 80)),
+                     "the capsule's top-centre target spans its fitted gap, respects display offsets and excludes adjacent content")
     }
 }
