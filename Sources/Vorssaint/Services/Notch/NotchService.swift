@@ -560,7 +560,7 @@ final class NotchService: ObservableObject {
     }
     var contentSize: CGSize { expandedGeometry.contentSize(for: expandedSize) }
     var usesGlassSurface: Bool {
-        expanded || peeking || dragPlaceholder || noticeExpanded
+        geometry.floats || expanded || peeking || dragPlaceholder || noticeExpanded
             || (captureControls != nil && !captureControlsCollapsed)
     }
 
@@ -2207,7 +2207,8 @@ final class NotchService: ObservableObject {
             mirror.model.shown = true
             // Shown at once where the island just left, so the two trade places.
             mirror.host.present(size: size, geometry: base, animated: !revealing,
-                                transitionContent: !revealing && previous != activity ? .replace : .none)
+                                transitionContent: !revealing && previous != activity ? .replace : .none,
+                                usesGlass: base.floats)
             mirror.host.setActivationArea(CGRect(origin: .zero, size: size),
                                           title: FeatureStrings.notch(L10n.shared.language).open,
                                           willPress: {}, activate: { [weak self] in self?.bringIsland(to: id) })

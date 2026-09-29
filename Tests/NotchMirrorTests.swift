@@ -34,13 +34,16 @@ enum NotchMirrorContract {
         let panel = Panel()
         var presented: [(size: CGSize, geometry: NotchGeometry, animated: Bool, transition: NotchContentTransition)] = []
         var hides = 0, closes = 0
+        var usesGlass = false
         var outline: (enabled: Bool, color: NSColor)?
         var activationRect = CGRect.zero
         var activate: (() -> Void)?
         var settling = false
         var settled: [() -> Void] = []
-        func present(size: CGSize, geometry: NotchGeometry, animated: Bool, transitionContent: NotchContentTransition) {
+        func present(size: CGSize, geometry: NotchGeometry, animated: Bool, transitionContent: NotchContentTransition,
+                     usesGlass: Bool = false) {
             presented.append((size, geometry, animated, transitionContent))
+            self.usesGlass = usesGlass
         }
         func hide(animated: Bool) { hides += 1; panel.isVisible = false }
         func close() { closes += 1; panel.isVisible = false }
@@ -126,6 +129,7 @@ enum NotchMirrorContract {
         service.capsuleMusicTitleShown = true
         service.syncMirrors()
         let capsule = service.mirrors[2]
+        suite.expect(capsule?.host.usesGlass == true, "a floating mirror requests the glass surface")
         suite.expect(service.mirrors.count == 1 && service.mirrors[1] == nil && capsule?.model.shown == true
                      && capsule?.host.presented.count == 1 && capsule?.host.presented.first?.animated == false
                      && capsule?.host.panel.isVisible == true && capsule?.model.activity == nil,
@@ -152,6 +156,7 @@ enum NotchMirrorContract {
         service.displayID = 2
         service.syncMirrors()
         let notch = service.mirrors[1]
+        suite.expect(notch?.host.usesGlass == false, "a compact camera mirror keeps its opaque surface")
         var builtInBase = service.baseGeometry(for: builtIn)
         builtInBase.compactSideRoom = NotchMenuBarLayout.sideRoom(screen: builtInBase.screen, cameraWidth: builtInBase.cameraWidth,
                                                                   barHeight: builtInBase.menuBarHeight, occupied: [])

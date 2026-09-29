@@ -628,6 +628,7 @@ enum NotchPresentationRefreshContract {
         suite.expect(service.panel?.isVisible == false, "the capsule withdraws when the brief track indicator ends")
         service.inside = true
         service.refreshPresentation(animated: false)
+        suite.expect(service.windowHost?.usesGlass == true, "the hovered floating capsule requests the glass surface")
         suite.expect(service.panel?.isVisible == true && service.edgeClicksEnabled,
                      "approaching the capsule reveals clickable controls even without menu measurements")
         service.expanded = true

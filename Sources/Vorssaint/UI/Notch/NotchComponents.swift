@@ -366,11 +366,12 @@ struct NotchSurfaceBackground: View {
             if #available(macOS 26, *), showsGlass, presentation.restingBlack < 1 {
                 let shape = NotchBackdropShape(contour: presentation.contour)
                 Color.clear
-                    .glassEffect(.clear, in: shape)
+                    .glassEffect(presentation.floatingGap > 0 ? .regular : .clear, in: shape)
                     .environment(\.appearsActive, true)
                     .materialActiveAppearance(.active)
                     .overlay {
-                        LinearGradient(stops: Self.shade(openness: presentation.openness, contrast: contrast),
+                        LinearGradient(stops: Self.shade(openness: presentation.openness, contrast: contrast,
+                                                         floating: presentation.floatingGap > 0),
                                        startPoint: .top, endPoint: .bottom)
                             .frame(height: presentation.contourBottom)
                             .frame(maxHeight: .infinity, alignment: .top)
@@ -390,8 +391,13 @@ struct NotchSurfaceBackground: View {
     /// The dimming over the glass, from the top of the island to its lip. Near
     /// a black strip the lip closes up, so the last frames of a collapse
     /// already match the resting island.
-    static func shade(openness: Double, contrast: ColorSchemeContrast) -> [Gradient.Stop] {
-        (0...64).map { index in
+    static func shade(openness: Double, contrast: ColorSchemeContrast, floating: Bool = false) -> [Gradient.Stop] {
+        // A floating capsule has no black camera housing to blend into.
+        if floating {
+            let tint = Color.black.opacity(1 - openness * (contrast == .increased ? 0.40 : 0.85))
+            return [Gradient.Stop(color: tint, location: 0), Gradient.Stop(color: tint, location: 1)]
+        }
+        return (0...64).map { index in
             let t = Double(index) / 64
             return Gradient.Stop(
                 color: .black.opacity(1 - openness * (contrast == .increased ? 0.10 : 0.45) * pow(t, 2.5)),

@@ -48,8 +48,8 @@ struct NotchView: View {
     private var usesGlassSurface: Bool {
 #if compiler(>=6.2)
         if #available(macOS 26, *), glass, !reduceTransparency {
-            // Resting wings, compact activities and small status notices keep
-            // blending into the physical camera cutout.
+            // Floating capsules use glass throughout; compact camera wings
+            // keep blending into the physical cutout.
             return service.usesGlassSurface
         }
 #endif
