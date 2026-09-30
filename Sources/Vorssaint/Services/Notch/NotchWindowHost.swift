@@ -54,6 +54,7 @@ final class NotchWindowHost: NSObject, CAAnimationDelegate {
     private(set) var missionControlFrameProbeCount = 0
 
     init(content: AnyView, geometry: NotchGeometry, size: CGSize,
+         glassDefaults: UserDefaults = .standard,
          background: (NotchBackdropPresentation) -> AnyView = { _ in AnyView(Color.black) },
          quickAccess: ((NotchQuickAccessMotion, NotchBackdropPresentation) -> AnyView)? = nil) {
         targetSize = size
@@ -61,7 +62,7 @@ final class NotchWindowHost: NSObject, CAAnimationDelegate {
         panel = NotchPanel(contentRect: geometry.frame(for: size),
                            styleMask: [.borderless, .nonactivatingPanel],
                            backing: .buffered, defer: false)
-        let mainCanvas = NotchCanvas(content: content, background: background, size: size)
+        let mainCanvas = NotchCanvas(content: content, background: background, size: size, glassDefaults: glassDefaults)
         canvas = mainCanvas
         quickAccessContainer = quickAccess.map { NotchQuickAccessContainer(canvas: mainCanvas, content: $0) }
         super.init()
@@ -613,6 +614,9 @@ final class NotchWindowHost: NSObject, CAAnimationDelegate {
     var contentProbeGrowthDrift: CGFloat { canvas.contentProbeGrowthDrift }
     var backdropProbeFrame: CGRect { canvas.backdropProbeFrame }
     var backdropProbeIndependent: Bool { canvas.backdropProbeIndependent }
+    var backdropProbeNativeGlass: Bool { canvas.backdropPresentation.nativeGlass }
+    var resizeProbeAnimating: Bool { canvas.resizeProbeAnimating }
+    func cancelResizeProbeAnimation() { canvas.cancelResizeProbeAnimation() }
     var backdropProbeFollowsSilhouette: Bool { canvas.backdropProbeFollowsSilhouette }
     var silhouetteProbePath: CGPath? { canvas.visiblePath }
     var silhouetteProbeFloatingGap: CGFloat? { canvas.floatingGap }
@@ -949,6 +953,12 @@ private final class NotchBackdropTick: NSObject {
 private final class NotchCanvas: NSView {
     private let host: NotchHostingView
     private let backdrop: NotchHostingView
+    private let glassDefaults: UserDefaults
+    private var floatingGlass: NSView?
+    private let glassContent = NotchGlassContentView()
+    private let glassBackdropMask = CAShapeLayer()
+    private let glassMotionCarrier = CALayer()
+    private var hostStageFrame = CGRect.zero
     let backdropPresentation = NotchBackdropPresentation()
     /// The backdrop keeps one width, centred on the island, so resizing the
     /// reserved area never moves what SwiftUI drew. Sized with the canvas,
@@ -978,7 +988,8 @@ private final class NotchCanvas: NSView {
     override var isFlipped: Bool { true }
     override var isOpaque: Bool { false }
 
-    init(content: AnyView, background: (NotchBackdropPresentation) -> AnyView, size: CGSize) {
+    init(content: AnyView, background: (NotchBackdropPresentation) -> AnyView, size: CGSize, glassDefaults: UserDefaults) {
+        self.glassDefaults = glassDefaults
         contentSize = size
         backdrop = NotchHostingView(rootView: background(backdropPresentation))
         backdrop.sizingOptions = []
@@ -996,6 +1007,10 @@ private final class NotchCanvas: NSView {
         layer?.backgroundColor = NSColor.black.cgColor
         layer?.masksToBounds = true
         layer?.mask = silhouette
+        // A glass surface cannot have an ancestor mask. Keep that mask's
+        // animation attached invisibly so its presentation path still runs.
+        glassMotionCarrier.opacity = 0
+        layer?.addSublayer(glassMotionCarrier)
         addSubview(backdrop)
         addSubview(host)
         activationButton.isTransparent = true
@@ -1149,6 +1164,8 @@ private final class NotchCanvas: NSView {
     }
 
 #if VORSSAINT_DEVELOPMENT
+    var resizeProbeAnimating: Bool { silhouette.animation(forKey: Self.motionKey) != nil }
+    func cancelResizeProbeAnimation() { silhouette.removeAnimation(forKey: Self.motionKey) }
     var contentProbeOpacity: Float { contentVisibility.presentation()?.opacity ?? contentVisibility.opacity }
     var contentProbeAnimating: Bool { contentVisibility.animation(forKey: "notch.opacity") != nil }
     var contentProbeAlpha: CGFloat { host.alphaValue }
@@ -1169,7 +1186,13 @@ private final class NotchCanvas: NSView {
         visiblePath.map { backdropPresentation.contour == backdropContour($0) } ?? false
     }
     var backdropProbeIndependent: Bool {
-        host.layer?.mask === contentVisibility && backdrop.layer?.mask == nil
+        if backdropPresentation.nativeGlass {
+            return host.layer?.mask === contentVisibility && host.superview === glassContent
+                && floatingGlass.map { glassContent.isDescendant(of: $0) } == true && layer?.mask == nil
+                && backdrop.layer?.mask === glassBackdropMask
+                && abs((floatingGlass?.alphaValue ?? 0) - backdropPresentation.openness) < 0.001
+        }
+        return host.layer?.mask === contentVisibility && backdrop.layer?.mask == nil
             && (backdrop.layer?.presentation()?.opacity ?? backdrop.layer?.opacity) == 1
     }
 #endif
@@ -1292,9 +1315,54 @@ private final class NotchCanvas: NSView {
     var usesGlass: Bool { backdropPresentation.usesGlass }
 
     func setUsesGlass(_ enabled: Bool) {
-        guard usesGlass != enabled else { return }
-        backdropPresentation.usesGlass = enabled
+        if usesGlass != enabled { backdropPresentation.usesGlass = enabled }
+        updateFloatingGlass()
         updateCanvasBlack()
+    }
+
+    /// Put content inside native glass so AppKit can adapt its foreground and
+    /// sample the desktop. A mask on the ancestor would flatten that effect.
+    private func updateFloatingGlass() {
+#if compiler(>=6.2)
+        if #available(macOS 26, *) {
+            let enabled = usesGlass && floatingGap != nil
+                && glassDefaults.bool(forKey: DefaultsKey.notchLiquidGlassEnabled)
+                && !NSWorkspace.shared.accessibilityDisplayShouldReduceTransparency
+            if enabled && floatingGlass == nil {
+                let glass = NotchNativeGlassView()
+                glass.style = .regular
+                glass.contentView = glassContent
+                addSubview(glass, positioned: .above, relativeTo: backdrop)
+                floatingGlass = glass
+            }
+            if backdropPresentation.nativeGlass != enabled {
+                backdropPresentation.nativeGlass = enabled
+                layer?.mask = enabled ? nil : silhouette
+                glassMotionCarrier.mask = enabled ? silhouette : nil
+                layer?.masksToBounds = !enabled
+                backdrop.layer?.mask = enabled ? glassBackdropMask : nil
+                if enabled { glassContent.addSubview(host) }
+                else { addSubview(host, positioned: .above, relativeTo: backdrop) }
+            }
+            floatingGlass?.isHidden = !enabled
+            if enabled, let glass = floatingGlass as? NSGlassEffectView {
+                let box = backdropPresentation.contour.boundingRect.offsetBy(dx: backdrop.frame.minX, dy: 0)
+                if !box.isNull {
+                    if glass.frame != box { glass.frame = box }
+                    let radius = NotchLayout.capsuleRadius(height: box.height)
+                    if glass.cornerRadius != radius { glass.cornerRadius = radius }
+                    if glassContent.frame != glass.bounds { glassContent.frame = glass.bounds }
+                }
+                if glass.alphaValue != backdropPresentation.openness { glass.alphaValue = backdropPresentation.openness }
+                if glassBackdropMask.frame != backdrop.bounds { glassBackdropMask.frame = backdrop.bounds }
+                glassBackdropMask.path = backdropPresentation.contour.cgPath
+            }
+        }
+#endif
+        let frame = backdropPresentation.nativeGlass
+            ? hostStageFrame.offsetBy(dx: -(floatingGlass?.frame.minX ?? 0), dy: -(floatingGlass?.frame.minY ?? 0))
+            : hostStageFrame
+        if host.frame != frame { host.frame = frame }
     }
 
     /// The island's black is also the canvas's own fill, not only the
@@ -1303,7 +1371,7 @@ private final class NotchCanvas: NSView {
     /// frame as it began to open or settled after closing. Under glass the
     /// fill gives way as the backdrop's resting black does.
     func updateCanvasBlack() {
-        let alpha = usesGlass ? CGFloat(backdropPresentation.restingBlack) : 1
+        let alpha = backdropPresentation.nativeGlass ? 0 : usesGlass ? CGFloat(backdropPresentation.restingBlack) : 1
         let color = NSColor.black.withAlphaComponent(alpha).cgColor
         guard layer?.backgroundColor != color else { return }
         CATransaction.begin()
@@ -1346,6 +1414,7 @@ private final class NotchCanvas: NSView {
         var transaction = Transaction()
         transaction.disablesAnimations = true
         withTransaction(transaction) { backdropPresentation.contour = contour }
+        updateFloatingGlass()
         updateCanvasBlack()
     }
 
@@ -1560,6 +1629,7 @@ private final class NotchCanvas: NSView {
             silhouette.frame = maskFrame
             edge.frame = maskFrame
         }
+        glassMotionCarrier.frame = bounds
         silhouetteSize = motionStart ?? contentSize
         silhouette.path = silhouettePath(for: silhouetteSize)
         edge.path = silhouette.path
@@ -1568,7 +1638,8 @@ private final class NotchCanvas: NSView {
         // the separate backdrop's contour changes on animation frames.
         var hostFrame = NotchStage.frame(stage, in: bounds)
         hostFrame.origin.x = centre - stage.width / 2
-        if host.frame != hostFrame { host.frame = hostFrame }
+        hostStageFrame = hostFrame
+        updateFloatingGlass()
         contentVisibility.frame = host.bounds
         if let arrival, arrival.width != host.layer?.bounds.width { installArrivalScale() }
         var backdropFrame = NotchStage.frame(stage, in: bounds)
@@ -1601,3 +1672,15 @@ final class NotchActivationButton: NSButton {
 private final class NotchHostingView: NSHostingView<AnyView> {
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
 }
+
+private final class NotchGlassContentView: NSView {
+    override var isFlipped: Bool { true }
+    override var isOpaque: Bool { false }
+}
+
+#if compiler(>=6.2)
+@available(macOS 26, *)
+private final class NotchNativeGlassView: NSGlassEffectView {
+    override var isFlipped: Bool { true }
+}
+#endif

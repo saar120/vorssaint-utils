@@ -100,6 +100,8 @@ struct NotchQuickAccessView: View {
                 GlassEffectContainer(spacing: NotchQuickAccessLayout.gap) {
                     buttons
                 }
+                .environment(\.appearsActive, true)
+                .materialActiveAppearance(.active)
                 .clipShape(NotchQuickAccessOutside(island: backdrop.contour), style: FillStyle(eoFill: true))
             } else if followsGlass {
                 buttons.modifier(NotchQuickAccessGlassSurface(presentation: backdrop, drops: drops))

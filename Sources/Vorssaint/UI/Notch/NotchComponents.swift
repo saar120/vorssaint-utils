@@ -285,6 +285,7 @@ final class NotchBackdropPresentation: ObservableObject {
     @Published var contour = Path()
     @Published var usesGlass = false
     @Published var floats = false
+    @Published var nativeGlass = false
     /// The camera strip's height in points, which the translucent background
     /// keeps black at every island height.
     @Published var stripHeight: CGFloat = 0
@@ -365,7 +366,7 @@ struct NotchSurfaceBackground: View {
             Color.black.opacity(showsGlass || showsTranslucent ? presentation.restingBlack : 1)
 #if compiler(>=6.2)
             if #available(macOS 26, *), showsGlass, presentation.restingBlack < 1 {
-                if presentation.floats {
+                if presentation.floats && !presentation.nativeGlass {
                     let body = presentation.contour.boundingRect
                     // Give native glass the capsule's actual bounds, with no
                     // painted tint or border over its adaptive material.
@@ -373,8 +374,12 @@ struct NotchSurfaceBackground: View {
                         .frame(width: max(0, body.width), height: max(0, body.height))
                         .glassEffect(.regular, in: RoundedRectangle(
                             cornerRadius: NotchLayout.capsuleRadius(height: body.height), style: .continuous))
+                        // Hover opens a non-activating panel; its material must
+                        // stay active without taking focus from the front app.
+                        .environment(\.appearsActive, true)
+                        .materialActiveAppearance(.active)
                         .position(x: body.midX, y: body.midY)
-                } else {
+                } else if !presentation.floats {
                     let shape = NotchBackdropShape(contour: presentation.contour)
                     Color.clear
                         .glassEffect(.clear, in: shape)
