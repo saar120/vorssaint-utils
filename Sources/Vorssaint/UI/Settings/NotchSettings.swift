@@ -64,7 +64,7 @@ struct NotchSettings: View {
     @AppStorage(DefaultsKey.notchCameraFitHeight) private var cameraFitHeight = 0.0
     @AppStorage(DefaultsKey.notchCapsuleFitWidth) private var capsuleFitWidth = 0.0
     @AppStorage(DefaultsKey.notchCapsuleFitHeight) private var capsuleFitHeight = 0.0
-    @AppStorage(DefaultsKey.notchCapsuleFitDrop) private var capsuleFitDrop = 0.0
+    @AppStorage(DefaultsKey.notchCapsuleFitDrop) private var capsuleFitDrop = NotchCapsuleFit.defaultDrop
     @AppStorage(DefaultsKey.notchHapticFeedback) private var hapticFeedback = true
     @AppStorage(DefaultsKey.notchTranslucentBackground) private var translucentBackground = false
     @AppStorage(DefaultsKey.notchLiquidGlassEnabled) private var liquidGlass = false

@@ -1072,6 +1072,7 @@ private final class NotchCanvas: NSView {
         edgeMask.frame.origin.y = gap == nil ? Self.outlineTopGap : -10_000
         CATransaction.commit()
         backdropPresentation.floatingGap = gap ?? 0
+        backdropPresentation.floats = gap != nil
         needsLayout = true
         layoutSubtreeIfNeeded()
     }

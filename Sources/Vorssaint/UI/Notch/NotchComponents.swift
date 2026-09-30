@@ -284,6 +284,7 @@ private struct NotchSettingsPreviewKey: EnvironmentKey {
 final class NotchBackdropPresentation: ObservableObject {
     @Published var contour = Path()
     @Published var usesGlass = false
+    @Published var floats = false
     /// The camera strip's height in points, which the translucent background
     /// keeps black at every island height.
     @Published var stripHeight: CGFloat = 0
@@ -335,7 +336,7 @@ struct NotchWindowBackground: View {
     }
 }
 
-/// Keep the upper content dark and open the lower surface into a refractive lip.
+/// Floating capsules use the system material; camera islands blend into the housing.
 struct NotchSurfaceBackground: View {
     @ObservedObject var presentation: NotchBackdropPresentation
     let glass: Bool
@@ -364,19 +365,29 @@ struct NotchSurfaceBackground: View {
             Color.black.opacity(showsGlass || showsTranslucent ? presentation.restingBlack : 1)
 #if compiler(>=6.2)
             if #available(macOS 26, *), showsGlass, presentation.restingBlack < 1 {
-                let shape = NotchBackdropShape(contour: presentation.contour)
-                Color.clear
-                    .glassEffect(presentation.floatingGap > 0 ? .regular : .clear, in: shape)
-                    .environment(\.appearsActive, true)
-                    .materialActiveAppearance(.active)
-                    .overlay {
-                        LinearGradient(stops: Self.shade(openness: presentation.openness, contrast: contrast,
-                                                         floating: presentation.floatingGap > 0),
-                                       startPoint: .top, endPoint: .bottom)
-                            .frame(height: presentation.contourBottom)
-                            .frame(maxHeight: .infinity, alignment: .top)
-                            .mask(shape)
-                    }
+                if presentation.floats {
+                    let body = presentation.contour.boundingRect
+                    // Give native glass the capsule's actual bounds, with no
+                    // painted tint or border over its adaptive material.
+                    Color.clear
+                        .frame(width: max(0, body.width), height: max(0, body.height))
+                        .glassEffect(.regular, in: RoundedRectangle(
+                            cornerRadius: NotchLayout.capsuleRadius(height: body.height), style: .continuous))
+                        .position(x: body.midX, y: body.midY)
+                } else {
+                    let shape = NotchBackdropShape(contour: presentation.contour)
+                    Color.clear
+                        .glassEffect(.clear, in: shape)
+                        .environment(\.appearsActive, true)
+                        .materialActiveAppearance(.active)
+                        .overlay {
+                            LinearGradient(stops: Self.shade(openness: presentation.openness, contrast: contrast),
+                                           startPoint: .top, endPoint: .bottom)
+                                .frame(height: presentation.contourBottom)
+                                .frame(maxHeight: .infinity, alignment: .top)
+                                .mask(shape)
+                        }
+                }
             }
 #endif
             if showsTranslucent, presentation.restingBlack < 1 {
@@ -391,13 +402,8 @@ struct NotchSurfaceBackground: View {
     /// The dimming over the glass, from the top of the island to its lip. Near
     /// a black strip the lip closes up, so the last frames of a collapse
     /// already match the resting island.
-    static func shade(openness: Double, contrast: ColorSchemeContrast, floating: Bool = false) -> [Gradient.Stop] {
-        // A floating capsule has no black camera housing to blend into.
-        if floating {
-            let tint = Color.black.opacity(1 - openness * (contrast == .increased ? 0.40 : 0.85))
-            return [Gradient.Stop(color: tint, location: 0), Gradient.Stop(color: tint, location: 1)]
-        }
-        return (0...64).map { index in
+    static func shade(openness: Double, contrast: ColorSchemeContrast) -> [Gradient.Stop] {
+        (0...64).map { index in
             let t = Double(index) / 64
             return Gradient.Stop(
                 color: .black.opacity(1 - openness * (contrast == .increased ? 0.10 : 0.45) * pow(t, 2.5)),

@@ -161,6 +161,7 @@ struct NotchCapsuleFit: Equatable {
     static let widthRange = -40.0...80.0
     static let heightRange = -4.0...12.0
     static let dropRange = 0.0...20.0
+    static let defaultDrop = 8.0
     static let zero = NotchCapsuleFit(width: 0, height: 0, drop: 0)
 
     let width: CGFloat
@@ -178,7 +179,7 @@ struct NotchCapsuleFit: Equatable {
     static func current(in defaults: UserDefaults = .standard) -> NotchCapsuleFit {
         NotchCapsuleFit(width: defaults.double(forKey: DefaultsKey.notchCapsuleFitWidth),
                         height: defaults.double(forKey: DefaultsKey.notchCapsuleFitHeight),
-                        drop: defaults.double(forKey: DefaultsKey.notchCapsuleFitDrop))
+                        drop: defaults.object(forKey: DefaultsKey.notchCapsuleFitDrop) as? Double ?? defaultDrop)
     }
 }
 
