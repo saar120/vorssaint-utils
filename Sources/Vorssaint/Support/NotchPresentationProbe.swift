@@ -399,7 +399,62 @@ enum NotchPresentationProbe {
         exit(failures.isEmpty ? 0 : 1)
     }
 
+    /// A floating surface has no physical black housing to blend into.
+    /// Sample the production glass view across reveal, click, collapse and exit.
+    private static func runFloatingGlassTransitionsAndExit() -> Never {
+        NSApplication.shared.setActivationPolicy(.prohibited)
+        guard #available(macOS 26, *), let screen = NSScreen.main,
+              !NSWorkspace.shared.accessibilityDisplayShouldReduceTransparency else {
+            print("FLOATING GLASS SKIPPED: native material unavailable")
+            exit(0)
+        }
+        let geometry = NotchGeometry(screen: screen.frame, safeAreaTop: 0, cameraWidth: 0,
+                                     silhouette: .capsule, capsuleFit: NotchCapsuleFit(width: 0, height: 0, drop: 8))
+        let host = NotchWindowHost(content: AnyView(Color.clear), geometry: geometry,
+                                  size: geometry.collapsed, glassDefaults: glassDefaults, background: surface)
+        host.panel.alphaValue = 0
+        host.panel.ignoresMouseEvents = true
+        var failures = Set<String>()
+        var samples = 0
+        func advance(_ seconds: TimeInterval, phase: String) {
+            let end = Date().addingTimeInterval(seconds)
+            while Date() < end {
+                RunLoop.current.run(until: min(end, Date().addingTimeInterval(0.008)))
+                host.synchronizeBackdropProbe()
+                guard host.panel.isVisible, host.visibleFrame.height > 2 else { continue }
+                samples += 1
+                if !host.backdropProbeNativeGlass || (host.backdropProbeNativeGlassAlpha ?? 0) < 0.99 {
+                    failures.insert("floating capsule turned black during \(phase)")
+                }
+            }
+        }
+        for _ in 0..<3 {
+            host.present(size: geometry.collapsed, geometry: geometry, animated: true,
+                         revealFromHidden: true, usesGlass: true)
+            host.panel.orderFrontRegardless()
+            advance(0.55, phase: "hover reveal")
+            host.present(size: geometry.expanded, geometry: geometry, animated: true, usesGlass: true)
+            advance(0.55, phase: "click expansion")
+            host.present(size: geometry.collapsed, geometry: geometry, animated: true, usesGlass: true)
+            advance(0.55, phase: "collapse")
+            host.hide(animated: true)
+            advance(0.55, phase: "pointer exit")
+        }
+        host.present(size: geometry.expanded, geometry: geometry, animated: false, usesGlass: true)
+        host.panel.orderFrontRegardless()
+        host.hide(animated: true)
+        advance(0.08, phase: "interrupted exit")
+        host.present(size: geometry.collapsed, geometry: geometry, animated: true,
+                     revealFromHidden: true, usesGlass: true)
+        advance(0.55, phase: "interrupted reentry")
+        host.close()
+        print(failures.isEmpty ? "FLOATING GLASS OK samples=\(samples)"
+              : "FLOATING GLASS FAILED samples=\(samples)\n" + failures.sorted().joined(separator: "\n"))
+        exit(failures.isEmpty ? 0 : 1)
+    }
+
     static func runAndExit() -> Never {
+        if CommandLine.arguments.contains("--floating-glass-transitions") { runFloatingGlassTransitionsAndExit() }
         if CommandLine.arguments.contains("--media-layout") { NotchMediaPresentationProbe.runAndExit() }
         if CommandLine.arguments.contains("--mission-control") { runMissionControlAndExit() }
         if let index = CommandLine.arguments.firstIndex(of: "--preview-notice"),
@@ -537,7 +592,7 @@ enum NotchPresentationProbe {
         if !reduceMotion, !host.contentProbeGrowing || !host.contentProbeBlurred {
             failures.append("opening content arrived without growing into focus")
         }
-        if !reduceMotion, host.backdropProbeOpenness > 0.01 {
+        if !reduceMotion, !capsule, host.backdropProbeOpenness > 0.01 {
             failures.append("glass opened at full strength over the black strip it grows out of")
         }
         advance(0.09)
@@ -599,7 +654,7 @@ enum NotchPresentationProbe {
         }
         advance(0.52)
         tracksClosingGlass = false
-        if !reduceMotion, (closingGlassOpenness ?? 1) > 0.15 {
+        if !reduceMotion, !capsule, (closingGlassOpenness ?? 1) > 0.15 {
             failures.append("glass reached the black strip still open: \(closingGlassOpenness ?? 1)")
         }
         if !matchesNativeFrame(host.panel.frame, geometry.frame(for: geometry.notice)) { failures.append("notice did not settle") }

@@ -187,7 +187,11 @@ final class NotchWindowHost: NSObject, CAAnimationDelegate {
         if canvas.backdropPresentation.stripHeight != geometry.stripHeight {
             canvas.backdropPresentation.stripHeight = geometry.stripHeight
         }
-        if canAnimate && changesFrame && (usesGlass || canvas.usesGlass) {
+        if geometry.floats {
+            // A floating capsule has no black camera housing to blend into.
+            // Keep its material intact while its silhouette reveals or hides.
+            canvas.backdropPresentation.openFully()
+        } else if canAnimate && changesFrame && (usesGlass || canvas.usesGlass) {
             // Glass closing into a black strip shuts as its page leaves, so the
             // empty shell never shows the windows beneath it; opening out of one
             // lets the glass in over the last stretch, as the page fades in.
@@ -615,6 +619,7 @@ final class NotchWindowHost: NSObject, CAAnimationDelegate {
     var backdropProbeFrame: CGRect { canvas.backdropProbeFrame }
     var backdropProbeIndependent: Bool { canvas.backdropProbeIndependent }
     var backdropProbeNativeGlass: Bool { canvas.backdropPresentation.nativeGlass }
+    var backdropProbeNativeGlassAlpha: CGFloat? { canvas.floatingGlassProbeAlpha }
     var resizeProbeAnimating: Bool { canvas.resizeProbeAnimating }
     func cancelResizeProbeAnimation() { canvas.cancelResizeProbeAnimation() }
     var backdropProbeFollowsSilhouette: Bool { canvas.backdropProbeFollowsSilhouette }
@@ -1164,6 +1169,7 @@ private final class NotchCanvas: NSView {
     }
 
 #if VORSSAINT_DEVELOPMENT
+    var floatingGlassProbeAlpha: CGFloat? { floatingGlass?.isHidden == false ? floatingGlass?.alphaValue : nil }
     var resizeProbeAnimating: Bool { silhouette.animation(forKey: Self.motionKey) != nil }
     func cancelResizeProbeAnimation() { silhouette.removeAnimation(forKey: Self.motionKey) }
     var contentProbeOpacity: Float { contentVisibility.presentation()?.opacity ?? contentVisibility.opacity }
