@@ -106,8 +106,8 @@ enum NotchDisplay: String, CaseIterable {
 }
 
 /// How the island meets the top of a display without a camera housing: a
-/// capsule floating in the menu bar, as on the phone, or a cutout hanging
-/// from the top edge. A physical camera always keeps the cutout it covers.
+/// capsule revealed by hovering at the top centre, or a persistent cutout
+/// hanging from the top edge. A physical camera always keeps the cutout it covers.
 enum NotchSilhouette: String, CaseIterable {
     case capsule, notch
 
@@ -161,6 +161,7 @@ struct NotchCapsuleFit: Equatable {
     static let widthRange = -40.0...80.0
     static let heightRange = -4.0...12.0
     static let dropRange = 0.0...20.0
+    static let defaultDrop = 8.0
     static let zero = NotchCapsuleFit(width: 0, height: 0, drop: 0)
 
     let width: CGFloat
@@ -178,7 +179,7 @@ struct NotchCapsuleFit: Equatable {
     static func current(in defaults: UserDefaults = .standard) -> NotchCapsuleFit {
         NotchCapsuleFit(width: defaults.double(forKey: DefaultsKey.notchCapsuleFitWidth),
                         height: defaults.double(forKey: DefaultsKey.notchCapsuleFitHeight),
-                        drop: defaults.double(forKey: DefaultsKey.notchCapsuleFitDrop))
+                        drop: defaults.object(forKey: DefaultsKey.notchCapsuleFitDrop) as? Double ?? defaultDrop)
     }
 }
 
@@ -1665,6 +1666,15 @@ struct NotchGeometry: Equatable {
 
     /// The island floats in the menu bar instead of hanging from the top edge.
     var floats: Bool { floatingGap != nil }
+
+    /// The hidden capsule is reached from the top edge, including any fitted
+    /// gap above it. Keep this target centred and independent of live activities.
+    func containsHoverActivation(_ point: CGPoint) -> Bool {
+        let size = restingSize(showsContent: false)
+        let width = max(100, size.width)
+        return CGRect(x: -width / 2, y: 0, width: width, height: floatingDrop + size.height)
+            .contains(CGPoint(x: point.x - screen.midX, y: screen.maxY - point.y))
+    }
 
     func hasSameMenuBar(as other: NotchGeometry) -> Bool {
         screen == other.screen && cameraWidth == other.cameraWidth

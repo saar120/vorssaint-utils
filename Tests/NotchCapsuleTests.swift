@@ -360,10 +360,15 @@ enum NotchCapsuleTests {
         defaults.removePersistentDomain(forName: domain)
         defer { defaults.removePersistentDomain(forName: domain) }
         let keys = [DefaultsKey.notchCapsuleFitWidth, DefaultsKey.notchCapsuleFitHeight, DefaultsKey.notchCapsuleFitDrop]
-        suite.expect(keys.allSatisfy { Defaults.registeredDefaults[$0] as? Double == 0 }
+        suite.expect(Defaults.registeredDefaults[DefaultsKey.notchCapsuleFitWidth] as? Double == 0
+                     && Defaults.registeredDefaults[DefaultsKey.notchCapsuleFitHeight] as? Double == 0
+                     && Defaults.registeredDefaults[DefaultsKey.notchCapsuleFitDrop] as? Double == NotchCapsuleFit.defaultDrop
                      && keys.allSatisfy(SettingsBackupSupport.exportKeys().contains)
-                     && NotchCapsuleFit.current(in: defaults) == .zero,
-                     "an untouched capsule has no fit, and a fit travels with a backup")
+                     && NotchCapsuleFit.current(in: defaults) == NotchCapsuleFit(width: 0, height: 0, drop: 8),
+                     "an untouched capsule floats eight points lower, and its fit travels with a backup")
+        defaults.set(0.0, forKey: DefaultsKey.notchCapsuleFitDrop)
+        suite.expect(NotchCapsuleFit.current(in: defaults) == .zero,
+                     "an explicitly saved zero drop remains at the user's chosen position")
         defaults.set(7.0, forKey: DefaultsKey.notchCapsuleFitWidth)
         defaults.set(2.6, forKey: DefaultsKey.notchCapsuleFitHeight)
         defaults.set(12.4, forKey: DefaultsKey.notchCapsuleFitDrop)

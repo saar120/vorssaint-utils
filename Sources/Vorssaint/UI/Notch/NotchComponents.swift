@@ -284,6 +284,8 @@ private struct NotchSettingsPreviewKey: EnvironmentKey {
 final class NotchBackdropPresentation: ObservableObject {
     @Published var contour = Path()
     @Published var usesGlass = false
+    @Published var floats = false
+    @Published var nativeGlass = false
     /// The camera strip's height in points, which the translucent background
     /// keeps black at every island height.
     @Published var stripHeight: CGFloat = 0
@@ -335,7 +337,7 @@ struct NotchWindowBackground: View {
     }
 }
 
-/// Keep the upper content dark and open the lower surface into a refractive lip.
+/// Floating capsules use the system material; camera islands blend into the housing.
 struct NotchSurfaceBackground: View {
     @ObservedObject var presentation: NotchBackdropPresentation
     let glass: Bool
@@ -364,18 +366,33 @@ struct NotchSurfaceBackground: View {
             Color.black.opacity(showsGlass || showsTranslucent ? presentation.restingBlack : 1)
 #if compiler(>=6.2)
             if #available(macOS 26, *), showsGlass, presentation.restingBlack < 1 {
-                let shape = NotchBackdropShape(contour: presentation.contour)
-                Color.clear
-                    .glassEffect(.clear, in: shape)
-                    .environment(\.appearsActive, true)
-                    .materialActiveAppearance(.active)
-                    .overlay {
-                        LinearGradient(stops: Self.shade(openness: presentation.openness, contrast: contrast),
-                                       startPoint: .top, endPoint: .bottom)
-                            .frame(height: presentation.contourBottom)
-                            .frame(maxHeight: .infinity, alignment: .top)
-                            .mask(shape)
-                    }
+                if presentation.floats && !presentation.nativeGlass {
+                    let body = presentation.contour.boundingRect
+                    // Give native glass the capsule's actual bounds, with no
+                    // painted tint or border over its adaptive material.
+                    Color.clear
+                        .frame(width: max(0, body.width), height: max(0, body.height))
+                        .glassEffect(.regular, in: RoundedRectangle(
+                            cornerRadius: NotchLayout.capsuleRadius(height: body.height), style: .continuous))
+                        // Hover opens a non-activating panel; its material must
+                        // stay active without taking focus from the front app.
+                        .environment(\.appearsActive, true)
+                        .materialActiveAppearance(.active)
+                        .position(x: body.midX, y: body.midY)
+                } else if !presentation.floats {
+                    let shape = NotchBackdropShape(contour: presentation.contour)
+                    Color.clear
+                        .glassEffect(.clear, in: shape)
+                        .environment(\.appearsActive, true)
+                        .materialActiveAppearance(.active)
+                        .overlay {
+                            LinearGradient(stops: Self.shade(openness: presentation.openness, contrast: contrast),
+                                           startPoint: .top, endPoint: .bottom)
+                                .frame(height: presentation.contourBottom)
+                                .frame(maxHeight: .infinity, alignment: .top)
+                                .mask(shape)
+                        }
+                }
             }
 #endif
             if showsTranslucent, presentation.restingBlack < 1 {

@@ -34,13 +34,16 @@ enum NotchMirrorContract {
         let panel = Panel()
         var presented: [(size: CGSize, geometry: NotchGeometry, animated: Bool, transition: NotchContentTransition)] = []
         var hides = 0, closes = 0
+        var usesGlass = false
         var outline: (enabled: Bool, color: NSColor)?
         var activationRect = CGRect.zero
         var activate: (() -> Void)?
         var settling = false
         var settled: [() -> Void] = []
-        func present(size: CGSize, geometry: NotchGeometry, animated: Bool, transitionContent: NotchContentTransition) {
+        func present(size: CGSize, geometry: NotchGeometry, animated: Bool, transitionContent: NotchContentTransition,
+                     usesGlass: Bool = false) {
             presented.append((size, geometry, animated, transitionContent))
+            self.usesGlass = usesGlass
         }
         func hide(animated: Bool) { hides += 1; panel.isVisible = false }
         func close() { closes += 1; panel.isVisible = false }
@@ -76,6 +79,7 @@ enum NotchMirrorContract {
         var idleContent = NotchIdleContent.none
         var expanded = false, peeking = false, canFollowPointer = true
         var hidesUntilHover = false, coversMenus = true, showsInCaptures = true
+        var capsuleMusicTitleShown = false
         var outlineEnabled = false, hidesInFullscreen = false
         let openTitle = "Open"
         var opened = 0, collapses = 0
@@ -121,7 +125,11 @@ enum NotchMirrorContract {
 
         let service = Service()
         service.syncMirrors()
+        suite.expect(service.mirrors[2] == nil, "an idle notchless display has no permanent mirrored capsule")
+        service.capsuleMusicTitleShown = true
+        service.syncMirrors()
         let capsule = service.mirrors[2]
+        suite.expect(capsule?.host.usesGlass == true, "a floating mirror requests the glass surface")
         suite.expect(service.mirrors.count == 1 && service.mirrors[1] == nil && capsule?.model.shown == true
                      && capsule?.host.presented.count == 1 && capsule?.host.presented.first?.animated == false
                      && capsule?.host.panel.isVisible == true && capsule?.model.activity == nil,
@@ -148,6 +156,7 @@ enum NotchMirrorContract {
         service.displayID = 2
         service.syncMirrors()
         let notch = service.mirrors[1]
+        suite.expect(notch?.host.usesGlass == false, "a compact camera mirror keeps its opaque surface")
         var builtInBase = service.baseGeometry(for: builtIn)
         builtInBase.compactSideRoom = NotchMenuBarLayout.sideRoom(screen: builtInBase.screen, cameraWidth: builtInBase.cameraWidth,
                                                                   barHeight: builtInBase.menuBarHeight, occupied: [])
@@ -227,6 +236,14 @@ enum NotchMirrorContract {
         service.syncMirrors()
         suite.expect(!service.mirrors.isEmpty && service.mirrors.values.allSatisfy { $0.host.panel.sharingType == .none },
                      "copies stay out of screenshots with the island")
+        service.capsuleMusicTitleShown = false
+        service.syncMirrors()
+        suite.expect(service.mirrors[2]?.model.shown == false,
+                     "ending a brief indicator hides the notchless copy even with an active timer")
+        service.displayID = 2
+        service.syncMirrors()
+        suite.expect(service.mirrors[1]?.model.shown == true,
+                     "a physical notch keeps its resting copy when the brief indicator ends")
         service.running = false
         service.syncMirrors()
         suite.expect(service.mirrors.isEmpty, "a stopped island leaves no copies")

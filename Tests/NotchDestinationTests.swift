@@ -79,6 +79,8 @@ enum NotchDestinationContract {
         var pinned = false
         var openedByHover = false
         var inside = false
+        var geometry = NotchGeometry(screen: CGRect(x: 0, y: 0, width: 1440, height: 900),
+                                     safeAreaTop: 32, cameraWidth: 180)
         var notice: NotchNotice?
         var noticeExpanded = false
         var noticeWork: DispatchWorkItem?

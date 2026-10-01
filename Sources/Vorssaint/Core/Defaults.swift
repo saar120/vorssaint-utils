@@ -1388,7 +1388,7 @@ enum Defaults {
         DefaultsKey.notchSilhouette: NotchSilhouette.capsule.rawValue,
         DefaultsKey.notchCapsuleFitWidth: 0.0,
         DefaultsKey.notchCapsuleFitHeight: 0.0,
-        DefaultsKey.notchCapsuleFitDrop: 0.0,
+        DefaultsKey.notchCapsuleFitDrop: NotchCapsuleFit.defaultDrop,
         DefaultsKey.notchOpenOnHover: false,
         DefaultsKey.notchHideInFullscreen: false,
         DefaultsKey.notchHideUntilHover: false,

@@ -57,6 +57,12 @@ enum NotchPresentationProbe {
         if !host.backdropProbeIndependent {
             failures.append("content transition obscured the backdrop")
         }
+        if #available(macOS 26, *), CommandLine.arguments.contains("--glass"),
+           host.silhouetteProbeFloatingGap != nil, host.backdropProbeUsesGlass,
+           !NSWorkspace.shared.accessibilityDisplayShouldReduceTransparency,
+           !host.backdropProbeNativeGlass {
+            failures.append("floating content is not embedded in native AppKit glass")
+        }
     }
 
     private static func checkHiddenReveal(screen: NSScreen) -> [String] {
@@ -65,7 +71,7 @@ enum NotchPresentationProbe {
         for (safeArea, silhouette): (CGFloat, NotchSilhouette) in [(0, .notch), (32, .notch), (0, .capsule)] {
             let geometry = NotchGeometry(screen: screen.frame, safeAreaTop: safeArea,
                                          cameraWidth: safeArea > 0 ? 210 : 0, silhouette: silhouette)
-            let host = NotchWindowHost(content: AnyView(Color.clear), geometry: geometry, size: geometry.collapsed, background: surface,
+            let host = NotchWindowHost(content: AnyView(Color.clear), geometry: geometry, size: geometry.collapsed, glassDefaults: glassDefaults, background: surface,
                                       quickAccess: quickAccess)
             host.panel.alphaValue = 0
             host.panel.ignoresMouseEvents = true
@@ -248,7 +254,7 @@ enum NotchPresentationProbe {
         }
         let geometry = NotchGeometry(screen: screen.frame, safeAreaTop: screen.safeAreaInsets.top,
                                      cameraWidth: screen.safeAreaInsets.top > 0 ? 210 : 0)
-        let host = NotchWindowHost(content: AnyView(Color.clear), geometry: geometry, size: geometry.collapsed, background: surface,
+        let host = NotchWindowHost(content: AnyView(Color.clear), geometry: geometry, size: geometry.collapsed, glassDefaults: glassDefaults, background: surface,
                                   quickAccess: quickAccess)
         let restingAlpha: CGFloat = 0.01
         host.panel.alphaValue = restingAlpha
@@ -364,7 +370,7 @@ enum NotchPresentationProbe {
         guard let screen = NSScreen.main else { print("QUICK ACCESS CLICKS FAILED: no display"); exit(1) }
         let geometry = NotchGeometry(screen: screen.frame, safeAreaTop: screen.safeAreaInsets.top,
                                      cameraWidth: screen.safeAreaInsets.top > 0 ? 210 : 0)
-        let host = NotchWindowHost(content: AnyView(Color.clear), geometry: geometry, size: geometry.collapsed, background: surface,
+        let host = NotchWindowHost(content: AnyView(Color.clear), geometry: geometry, size: geometry.collapsed, glassDefaults: glassDefaults, background: surface,
                                    quickAccess: quickAccess)
         host.panel.orderFrontRegardless()
         var failures: [String] = []
@@ -393,7 +399,62 @@ enum NotchPresentationProbe {
         exit(failures.isEmpty ? 0 : 1)
     }
 
+    /// A floating surface has no physical black housing to blend into.
+    /// Sample the production glass view across reveal, click, collapse and exit.
+    private static func runFloatingGlassTransitionsAndExit() -> Never {
+        NSApplication.shared.setActivationPolicy(.prohibited)
+        guard #available(macOS 26, *), let screen = NSScreen.main,
+              !NSWorkspace.shared.accessibilityDisplayShouldReduceTransparency else {
+            print("FLOATING GLASS SKIPPED: native material unavailable")
+            exit(0)
+        }
+        let geometry = NotchGeometry(screen: screen.frame, safeAreaTop: 0, cameraWidth: 0,
+                                     silhouette: .capsule, capsuleFit: NotchCapsuleFit(width: 0, height: 0, drop: 8))
+        let host = NotchWindowHost(content: AnyView(Color.clear), geometry: geometry,
+                                  size: geometry.collapsed, glassDefaults: glassDefaults, background: surface)
+        host.panel.alphaValue = 0
+        host.panel.ignoresMouseEvents = true
+        var failures = Set<String>()
+        var samples = 0
+        func advance(_ seconds: TimeInterval, phase: String) {
+            let end = Date().addingTimeInterval(seconds)
+            while Date() < end {
+                RunLoop.current.run(until: min(end, Date().addingTimeInterval(0.008)))
+                host.synchronizeBackdropProbe()
+                guard host.panel.isVisible, host.visibleFrame.height > 2 else { continue }
+                samples += 1
+                if !host.backdropProbeNativeGlass || (host.backdropProbeNativeGlassAlpha ?? 0) < 0.99 {
+                    failures.insert("floating capsule turned black during \(phase)")
+                }
+            }
+        }
+        for _ in 0..<3 {
+            host.present(size: geometry.collapsed, geometry: geometry, animated: true,
+                         revealFromHidden: true, usesGlass: true)
+            host.panel.orderFrontRegardless()
+            advance(0.55, phase: "hover reveal")
+            host.present(size: geometry.expanded, geometry: geometry, animated: true, usesGlass: true)
+            advance(0.55, phase: "click expansion")
+            host.present(size: geometry.collapsed, geometry: geometry, animated: true, usesGlass: true)
+            advance(0.55, phase: "collapse")
+            host.hide(animated: true)
+            advance(0.55, phase: "pointer exit")
+        }
+        host.present(size: geometry.expanded, geometry: geometry, animated: false, usesGlass: true)
+        host.panel.orderFrontRegardless()
+        host.hide(animated: true)
+        advance(0.08, phase: "interrupted exit")
+        host.present(size: geometry.collapsed, geometry: geometry, animated: true,
+                     revealFromHidden: true, usesGlass: true)
+        advance(0.55, phase: "interrupted reentry")
+        host.close()
+        print(failures.isEmpty ? "FLOATING GLASS OK samples=\(samples)"
+              : "FLOATING GLASS FAILED samples=\(samples)\n" + failures.sorted().joined(separator: "\n"))
+        exit(failures.isEmpty ? 0 : 1)
+    }
+
     static func runAndExit() -> Never {
+        if CommandLine.arguments.contains("--floating-glass-transitions") { runFloatingGlassTransitionsAndExit() }
         if CommandLine.arguments.contains("--media-layout") { NotchMediaPresentationProbe.runAndExit() }
         if CommandLine.arguments.contains("--mission-control") { runMissionControlAndExit() }
         if let index = CommandLine.arguments.firstIndex(of: "--preview-notice"),
@@ -415,7 +476,7 @@ enum NotchPresentationProbe {
                             capsuleFit: fitted ? NotchCapsuleFit(width: 20, height: 6, drop: 8) : .zero)
             : NotchGeometry(screen: screen.frame, safeAreaTop: screen.safeAreaInsets.top,
                             cameraWidth: screen.safeAreaInsets.top > 0 ? 210 : 0)
-        let host = NotchWindowHost(content: AnyView(Color.clear), geometry: geometry, size: geometry.collapsed, background: surface)
+        let host = NotchWindowHost(content: AnyView(Color.clear), geometry: geometry, size: geometry.collapsed, glassDefaults: glassDefaults, background: surface)
         host.panel.alphaValue = 0
         host.panel.ignoresMouseEvents = true
         host.panel.orderFrontRegardless()
@@ -531,7 +592,7 @@ enum NotchPresentationProbe {
         if !reduceMotion, !host.contentProbeGrowing || !host.contentProbeBlurred {
             failures.append("opening content arrived without growing into focus")
         }
-        if !reduceMotion, host.backdropProbeOpenness > 0.01 {
+        if !reduceMotion, !capsule, host.backdropProbeOpenness > 0.01 {
             failures.append("glass opened at full strength over the black strip it grows out of")
         }
         advance(0.09)
@@ -593,7 +654,7 @@ enum NotchPresentationProbe {
         }
         advance(0.52)
         tracksClosingGlass = false
-        if !reduceMotion, (closingGlassOpenness ?? 1) > 0.15 {
+        if !reduceMotion, !capsule, (closingGlassOpenness ?? 1) > 0.15 {
             failures.append("glass reached the black strip still open: \(closingGlassOpenness ?? 1)")
         }
         if !matchesNativeFrame(host.panel.frame, geometry.frame(for: geometry.notice)) { failures.append("notice did not settle") }
@@ -632,7 +693,7 @@ enum NotchPresentationProbe {
         let crowded = NotchGeometry(screen: screen.frame, safeAreaTop: 38, cameraWidth: 210,
                                     compactSideRoom: 0)
         let downloadHost = NotchWindowHost(content: AnyView(Color.clear), geometry: crowded,
-                                          size: crowded.compactActivitySize, background: surface)
+                                          size: crowded.compactActivitySize, glassDefaults: glassDefaults, background: surface)
         downloadHost.panel.alphaValue = 0
         downloadHost.panel.ignoresMouseEvents = true
         downloadHost.panel.orderFrontRegardless()
@@ -732,12 +793,12 @@ enum NotchPresentationProbe {
         pasteboard.releaseGlobally()
         host.present(size: geometry.peek, geometry: geometry, animated: false, usesGlass: true)
         if !matchesNativeFrame(host.panel.frame, geometry.frame(for: geometry.peek))
-            || host.panel.contentView?.layer?.mask?.animation(forKey: "notch.resize") != nil {
+            || host.resizeProbeAnimating {
             failures.append("immediate presentation retained an animation")
         }
         host.present(size: geometry.expanded, geometry: geometry, animated: true, usesGlass: true)
         advance(0.04)
-        host.panel.contentView?.layer?.mask?.removeAnimation(forKey: "notch.resize")
+        host.cancelResizeProbeAnimation()
         advance(0.04)
         if !matchesNativeFrame(host.panel.frame, geometry.frame(for: geometry.expanded)) {
             failures.append("an externally cancelled animation retained its reserved frame")
@@ -789,7 +850,7 @@ enum NotchPresentationProbe {
         if !NotchQuickAccessDrop(progress: 0, index: 0, edge: 86, top: 55, side: .left).path(in: dropBounds).isEmpty {
             failures.append("a withdrawn drop left a painted fragment")
         }
-        let bubbles = NotchWindowHost(content: AnyView(Color.clear), geometry: geometry, size: geometry.collapsed, background: surface,
+        let bubbles = NotchWindowHost(content: AnyView(Color.clear), geometry: geometry, size: geometry.collapsed, glassDefaults: glassDefaults, background: surface,
                                       quickAccess: quickAccess)
         bubbles.panel.alphaValue = 0
         bubbles.panel.ignoresMouseEvents = true
@@ -813,9 +874,10 @@ enum NotchPresentationProbe {
             if bubbles.quickAccessProbeTrackingAreas != 1 {
                 failures.append("floating controls did not create exactly one hover corridor")
             }
-            // Glass shades the circles like the island at the same height, and
-            // like its lip below it. Sampled under the glyph.
-            for point in bubbles.quickAccessProbeCenters {
+            // Only painted drops have a fixed opacity. Native capsule glass
+            // adapts its backing to the surroundings; check its geometry,
+            // clipping and complete click area below instead.
+            for point in bubbles.quickAccessProbeCenters where !quickAccessGlass || !geometry.floats {
                 let sample = CGPoint(x: point.x, y: point.y - 15)
                 let depth = min(1, (bubbles.panel.frame.maxY - sample.y) / geometry.expanded.height)
                 let expected = quickAccessGlass ? 1 - 0.45 * pow(depth, 2.5) : 1
@@ -952,7 +1014,7 @@ enum NotchPresentationProbe {
                                                   menuBarHeight: barHeight, compactSideRoom: 100)
                 let initial = timerGeometry.compactTimerGeometry(showsDownloads: downloads)
                 let timerHost = NotchWindowHost(content: AnyView(Color.clear), geometry: initial,
-                                                size: initial.compactActivitySize, background: surface)
+                                                size: initial.compactActivitySize, glassDefaults: glassDefaults, background: surface)
                 timerHost.panel.alphaValue = 0
                 timerHost.panel.ignoresMouseEvents = true
                 timerHost.panel.orderFrontRegardless()
@@ -982,7 +1044,7 @@ enum NotchPresentationProbe {
             let away = NotchGeometry(screen: other.frame, safeAreaTop: other.safeAreaInsets.top,
                                      cameraWidth: other.safeAreaInsets.top > 0 ? 210 : 0)
             let traveller = NotchWindowHost(content: AnyView(Color.clear), geometry: geometry,
-                                            size: geometry.collapsed, background: surface)
+                                            size: geometry.collapsed, glassDefaults: glassDefaults, background: surface)
             traveller.panel.alphaValue = 0
             traveller.panel.ignoresMouseEvents = true
             traveller.panel.orderFrontRegardless()
@@ -1016,7 +1078,7 @@ enum NotchPresentationProbe {
                 var geometry = NotchGeometry(screen: screen.frame, safeAreaTop: physical ? 32 : 0, cameraWidth: physical ? 180 : 0,
                                              menuBarHeight: barHeight, compactSideRoom: 64, silhouette: silhouette)
                 geometry.quickAccessBottomInset = NotchQuickAccessLayout.gutter
-                let host = NotchWindowHost(content: AnyView(Color.clear), geometry: geometry, size: geometry.collapsed, background: surface,
+                let host = NotchWindowHost(content: AnyView(Color.clear), geometry: geometry, size: geometry.collapsed, glassDefaults: glassDefaults, background: surface,
                                           quickAccess: { _, _ in AnyView(Color.clear) })
                 host.panel.alphaValue = 0
                 host.panel.ignoresMouseEvents = true

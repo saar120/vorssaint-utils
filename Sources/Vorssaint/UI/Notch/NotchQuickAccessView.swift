@@ -81,6 +81,8 @@ struct NotchQuickAccessView: View {
         return false
     }
 
+    private var nativeFloatingGlass: Bool { followsGlass && backdrop.floats }
+
     var body: some View {
         let drops = NotchQuickAccessDrops(placements: motion.placements, progress: motion.progress)
         let buttons = ZStack(alignment: .topLeading) {
@@ -93,11 +95,26 @@ struct NotchQuickAccessView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         Group {
+#if compiler(>=6.2)
+            if #available(macOS 26, *), nativeFloatingGlass {
+                GlassEffectContainer(spacing: NotchQuickAccessLayout.gap) {
+                    buttons
+                }
+                .environment(\.appearsActive, true)
+                .materialActiveAppearance(.active)
+                .clipShape(NotchQuickAccessOutside(island: backdrop.contour), style: FillStyle(eoFill: true))
+            } else if followsGlass {
+                buttons.modifier(NotchQuickAccessGlassSurface(presentation: backdrop, drops: drops))
+            } else {
+                buttons.background { drops }
+            }
+#else
             if followsGlass {
                 buttons.modifier(NotchQuickAccessGlassSurface(presentation: backdrop, drops: drops))
             } else {
                 buttons.background { drops }
             }
+#endif
         }
         .environment(\.colorScheme, .dark)
         .environment(\.notchPresentation, true)
@@ -148,16 +165,36 @@ struct NotchQuickAccessView: View {
                 // the app behind, not just the glyph.
                 .background(followsGlass ? Color.black.opacity(0.02) : Color.black, in: Circle())
                 .overlay {
-                    Circle().strokeBorder(.white.opacity(selected || contrast == .increased ? 0.6 : 0.16), lineWidth: 0.75)
-                        .allowsHitTesting(false)
+                    if !nativeFloatingGlass {
+                        Circle().strokeBorder(.white.opacity(selected || contrast == .increased ? 0.6 : 0.16), lineWidth: 0.75)
+                            .allowsHitTesting(false)
+                    }
                 }
                 .contentShape(Circle())
         }
-        .buttonStyle(NotchButtonStyle(cornerRadius: NotchQuickAccessLayout.diameter / 2))
+        .modifier(NotchQuickAccessButtonSurface(nativeGlass: nativeFloatingGlass, selected: selected))
         .help(title)
         .accessibilityLabel(title)
         .accessibilityAddTraits(selected ? .isSelected : [])
         .accessibilityIdentifier("notch.quickAccess.\(button.id.uuidString)")
+    }
+}
+
+private struct NotchQuickAccessButtonSurface: ViewModifier {
+    let nativeGlass: Bool
+    let selected: Bool
+
+    func body(content: Content) -> some View {
+#if compiler(>=6.2)
+        if #available(macOS 26, *), nativeGlass {
+            content.buttonStyle(.plain)
+                .glassEffect(.regular.tint(selected ? .white.opacity(0.12) : .clear).interactive(), in: Circle())
+        } else {
+            content.buttonStyle(NotchButtonStyle(cornerRadius: NotchQuickAccessLayout.diameter / 2))
+        }
+#else
+        content.buttonStyle(NotchButtonStyle(cornerRadius: NotchQuickAccessLayout.diameter / 2))
+#endif
     }
 }
 
